@@ -1,0 +1,156 @@
+/* social media applications*/
+
+const express = require("express");
+const mongoose = require("mongoose");
+const cors = require("cors");
+const multer = require("multer");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const http = require("http");
+const { Server } = require("socket.io");
+
+// Initialize app and middlewares
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
+
+// Middlewares
+app.use(express.json());
+app.use(cors());
+
+// DB connection
+mongoose.connect("mongodb://localhost/social-app", {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+});
+
+// Multer setup for profile picture upload
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, "uploads/"),
+  filename: (req, file, cb) => cb(null, Date.now() + "-" + file.originalname),
+});
+const upload = multer({ storage });
+
+// Models (User, Post, Comment)
+const User = require("./models/User");
+const Post = require("./models/Post");
+const Comment = require("./models/Comment");
+
+// Socket.io connection for real-time updates
+io.on("connection", (socket) => {
+  console.log("A user connected");
+
+  socket.on("disconnect", () => {
+    console.log("User disconnected");
+  });
+
+  // Listen for new posts or comments
+  socket.on("newPost", (post) => {
+    io.emit("newPost", post);
+  });
+});
+
+// API Routes
+app.post("/register", async (req, res) => {
+  const { username, password } = req.body;
+  const hashedPassword = await bcrypt.hash(password, 10);
+  const newUser = new User({ username, password: hashedPassword });
+  await newUser.save();
+  res.json({ message: "User created" });
+});
+
+app.post("/login", async (req, res) => {
+  const { username, password } = req.body;
+  const user = await User.findOne({ username });
+  if (!user || !(await bcrypt.compare(password, user.password))) {
+    return res.status(400).json({ message: "Invalid credentials" });
+  }
+  const token = jwt.sign({ id: user._id }, "secretKey");
+  res.json({ token });
+});
+
+app.post("/profile-picture", upload.single("profilePic"), (req, res) => {
+  res.json({ filePath: `/uploads/${req.file.filename}` });
+});
+
+// Start server
+const PORT = 5000;
+server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+// models/User.js
+const mongoose = require("mongoose");
+
+const UserSchema = new mongoose.Schema({
+  username: String,
+  password: String,
+  profilePic: String,
+});
+
+module.exports = mongoose.model("User", UserSchema);
+// models/Post.js
+const mongoose = require("mongoose");
+
+const PostSchema = new mongoose.Schema({
+  content: String,
+  author: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  createdAt: { type: Date, default: Date.now },
+});
+
+module.exports = mongoose.model("Post", PostSchema);
+// models/Comment.js
+const mongoose = require("mongoose");
+
+const CommentSchema = new mongoose.Schema({
+  text: String,
+  author: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  post: { type: mongoose.Schema.Types.ObjectId, ref: "Post" },
+  createdAt: { type: Date, default: Date.now },
+});
+
+module.exports = mongoose.model("Comment", CommentSchema);
+import React, { useState, useEffect } from "react";
+import axios from "axios";
+import { io } from "socket.io-client";
+
+const socket = io("http://localhost:5000");
+
+function App() {
+  const [posts, setPosts] = useState([]);
+  const [content, setContent] = useState("");
+
+  useEffect(() => {
+    socket.on("newPost", (post) => {
+      setPosts((prevPosts) => [post, ...prevPosts]);
+    });
+  }, []);
+
+  const handlePost = async () => {
+    const response = await axios.post("http://localhost:5000/posts", {
+      content,
+      author: "User ID", // Replace with actual user ID
+    });
+    socket.emit("newPost", response.data);
+    setContent("");
+  };
+
+  return (
+    <div>
+      <h1>Social Media Feed</h1>
+      <input
+        value={content}
+        onChange={(e) => setContent(e.target.value)}
+        placeholder="What's on your mind?"
+      />
+      <button onClick={handlePost}>Post</button>
+
+      <div>
+        {posts.map((post) => (
+          <div key={post._id}>
+            <p>{post.content}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+
